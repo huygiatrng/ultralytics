@@ -16,13 +16,17 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
     hooks:
-      # - id: end-of-file-fixer
+      - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: check-case-conflict
       - id: check-yaml
       - id: check-toml
       - id: pretty-format-json
       - id: check-docstring-first
+    # -   id: debug-statements
+    # -   id: double-quote-string-fixer
+    # -   id: name-tests-test
+    # -   id: requirements-txt-fixer
 
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.3.1
