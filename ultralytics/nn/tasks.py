@@ -1,6 +1,5 @@
 # Ultralytics YOLO 🚀, GPL-3.0 license
 
-import ast
 import contextlib
 from copy import deepcopy
 from pathlib import Path
@@ -160,7 +159,7 @@ class BaseModel(nn.Module):
             weights (str): The weights to load into the model.
         """
         # Force all tasks to implement this function
-        raise NotImplementedError("This function needs to be implemented by derived classes!")
+        raise NotImplementedError('This function needs to be implemented by derived classes!')
 
 
 class DetectionModel(BaseModel):
@@ -249,7 +248,7 @@ class SegmentationModel(DetectionModel):
         super().__init__(cfg, ch, nc, verbose)
 
     def _forward_augment(self, x):
-        raise NotImplementedError("WARNING ⚠️ SegmentationModel has not supported augment inference yet!")
+        raise NotImplementedError('WARNING ⚠️ SegmentationModel has not supported augment inference yet!')
 
 
 class ClassificationModel(BaseModel):
@@ -292,7 +291,7 @@ class ClassificationModel(BaseModel):
         self.info()
 
     def load(self, weights):
-        model = weights["model"] if isinstance(weights, dict) else weights  # torchvision models are not dicts
+        model = weights['model'] if isinstance(weights, dict) else weights  # torchvision models are not dicts
         csd = model.float().state_dict()
         csd = intersect_dicts(csd, self.state_dict())  # intersect
         self.load_state_dict(csd, strict=False)  # load
@@ -338,16 +337,16 @@ def torch_safe_load(weight):
 
     file = attempt_download_asset(weight)  # search online if missing locally
     try:
-        return torch.load(file, map_location='cpu')  # load
+        return torch.load(file, map_location='cpu'), file  # load
     except ModuleNotFoundError as e:
         if e.name == 'omegaconf':  # e.name is missing module name
-            LOGGER.warning(f"WARNING ⚠️ {weight} requires {e.name}, which is not in ultralytics requirements."
-                           f"\nAutoInstall will run now for {e.name} but this feature will be removed in the future."
-                           f"\nRecommend fixes are to train a new model using updated ultralytics package or to "
-                           f"download updated models from https://github.com/ultralytics/assets/releases/tag/v0.0.0")
+            LOGGER.warning(f'WARNING ⚠️ {weight} requires {e.name}, which is not in ultralytics requirements.'
+                           f'\nAutoInstall will run now for {e.name} but this feature will be removed in the future.'
+                           f'\nRecommend fixes are to train a new model using updated ultralytics package or to '
+                           f'download updated models from https://github.com/ultralytics/assets/releases/tag/v0.0.0')
         if e.name != 'models':
             check_requirements(e.name)  # install missing module
-        return torch.load(file, map_location='cpu')  # load
+        return torch.load(file, map_location='cpu'), file  # load
 
 
 def attempt_load_weights(weights, device=None, inplace=True, fuse=False):
@@ -355,13 +354,13 @@ def attempt_load_weights(weights, device=None, inplace=True, fuse=False):
 
     ensemble = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:
-        ckpt = torch_safe_load(w)  # load ckpt
+        ckpt, w = torch_safe_load(w)  # load ckpt
         args = {**DEFAULT_CFG_DICT, **ckpt['train_args']}  # combine model and default args, preferring model args
         model = (ckpt.get('ema') or ckpt['model']).to(device).float()  # FP32 model
 
         # Model compatibility updates
         model.args = args  # attach args to model
-        model.pt_path = weights  # attach *.pt file path to model
+        model.pt_path = w  # attach *.pt file path to model
         model.task = guess_model_task(model)
         if not hasattr(model, 'stride'):
             model.stride = torch.tensor([32.])
@@ -382,7 +381,7 @@ def attempt_load_weights(weights, device=None, inplace=True, fuse=False):
         return ensemble[-1]
 
     # Return ensemble
-    print(f'Ensemble created with {weights}\n')
+    LOGGER.info(f'Ensemble created with {weights}\n')
     for k in 'names', 'nc', 'yaml':
         setattr(ensemble, k, getattr(ensemble[0], k))
     ensemble.stride = ensemble[torch.argmax(torch.tensor([m.stride.max() for m in ensemble])).int()].stride
@@ -392,7 +391,7 @@ def attempt_load_weights(weights, device=None, inplace=True, fuse=False):
 
 def attempt_load_one_weight(weight, device=None, inplace=True, fuse=False):
     # Loads a single model weights
-    ckpt = torch_safe_load(weight)  # load ckpt
+    ckpt, weight = torch_safe_load(weight)  # load ckpt
     args = {**DEFAULT_CFG_DICT, **ckpt['train_args']}  # combine model and default args, preferring model args
     model = (ckpt.get('ema') or ckpt['model']).to(device).float()  # FP32 model
 
@@ -489,13 +488,13 @@ def guess_model_task(model):
 
     def cfg2task(cfg):
         # Guess from YAML dictionary
-        m = cfg["head"][-1][-2].lower()  # output module name
-        if m in ["classify", "classifier", "cls", "fc"]:
-            return "classify"
-        if m in ["detect"]:
-            return "detect"
-        if m in ["segment"]:
-            return "segment"
+        m = cfg['head'][-1][-2].lower()  # output module name
+        if m in ['classify', 'classifier', 'cls', 'fc']:
+            return 'classify'
+        if m in ['detect']:
+            return 'detect'
+        if m in ['segment']:
+            return 'segment'
 
     # Guess from model cfg
     if isinstance(model, dict):
@@ -513,22 +512,22 @@ def guess_model_task(model):
 
         for m in model.modules():
             if isinstance(m, Detect):
-                return "detect"
+                return 'detect'
             elif isinstance(m, Segment):
-                return "segment"
+                return 'segment'
             elif isinstance(m, Classify):
-                return "classify"
+                return 'classify'
 
     # Guess from model filename
     if isinstance(model, (str, Path)):
         model = Path(model).stem
         if '-seg' in model:
-            return "segment"
+            return 'segment'
         elif '-cls' in model:
-            return "classify"
+            return 'classify'
         else:
-            return "detect"
+            return 'detect'
 
     # Unable to determine task from model
-    raise SyntaxError("YOLO is unable to automatically guess model task. Explicitly define task for your model, "
+    raise SyntaxError('YOLO is unable to automatically guess model task. Explicitly define task for your model, '
                       "i.e. 'task=detect', 'task=segment' or 'task=classify'.")
