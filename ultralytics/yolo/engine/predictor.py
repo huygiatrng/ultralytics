@@ -32,7 +32,6 @@ from collections import defaultdict
 from pathlib import Path
 
 import cv2
-import torch
 
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.yolo.cfg import get_cfg
@@ -108,7 +107,6 @@ class BasePredictor:
     def postprocess(self, preds, img, orig_img):
         return preds
 
-    @smart_inference_mode()
     def __call__(self, source=None, model=None, stream=False):
         if stream:
             return self.stream_inference(source, model)
@@ -136,6 +134,7 @@ class BasePredictor:
         self.source_type = self.dataset.source_type
         self.vid_path, self.vid_writer = [None] * self.dataset.bs, [None] * self.dataset.bs
 
+    @smart_inference_mode()
     def stream_inference(self, source=None, model=None):
         if self.args.verbose:
             LOGGER.info('')
@@ -161,12 +160,14 @@ class BasePredictor:
             self.batch = batch
             path, im, im0s, vid_cap, s = batch
             visualize = increment_path(self.save_dir / Path(path).stem, mkdir=True) if self.args.visualize else False
+
+            # preprocess
             with self.dt[0]:
                 im = self.preprocess(im)
                 if len(im.shape) == 3:
                     im = im[None]  # expand for batch dim
 
-            # Inference
+            # inference
             with self.dt[1]:
                 preds = self.model(im, augment=self.args.augment, visualize=visualize)
 
@@ -176,7 +177,12 @@ class BasePredictor:
             self.run_callbacks('on_predict_postprocess_end')
 
             # visualize, save, write results
-            for i in range(len(im)):
+            n = len(im)
+            for i in range(n):
+                self.results[i].speed = {
+                    'preprocess': self.dt[0].dt * 1E3 / n,
+                    'inference': self.dt[1].dt * 1E3 / n,
+                    'postprocess': self.dt[2].dt * 1E3 / n}
                 p, im0 = (path[i], im0s[i].copy()) if self.source_type.webcam or self.source_type.from_img \
                     else (path, im0s.copy())
                 p = Path(p)
