@@ -152,4 +152,5 @@ def add_integration_callbacks(instance):
 
     for x in clearml_callbacks, comet_callbacks, hub_callbacks, tb_callbacks, wb_callbacks:
         for k, v in x.items():
-            instance.callbacks[k].append(v)  # callback[name].append(func)
+            if v not in instance.callbacks[k]:  # prevent duplicate callbacks addition
+                instance.callbacks[k].append(v)  # callback[name].append(func)

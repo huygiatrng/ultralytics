@@ -215,7 +215,7 @@ class Exporter:
         self.model = model
         self.file = file
         self.output_shape = tuple(y.shape) if isinstance(y, torch.Tensor) else tuple(tuple(x.shape) for x in y)
-        self.pretty_name = self.file.stem.replace('yolo', 'YOLO')
+        self.pretty_name = Path(self.model.yaml.get('yaml_file', self.file)).stem.replace('yolo', 'YOLO')
         description = f'Ultralytics {self.pretty_name} model ' + f'trained on {Path(self.args.data).name}' \
             if self.args.data else '(untrained)'
         self.metadata = {
@@ -225,6 +225,8 @@ class Exporter:
             'version': __version__,
             'stride': int(max(model.stride)),
             'task': model.task,
+            'batch': self.args.batch,
+            'imgsz': self.imgsz,
             'names': model.names}  # model metadata
 
         LOGGER.info(f"\n{colorstr('PyTorch:')} starting from {file} with input shape {tuple(im.shape)} BCHW and "
@@ -243,15 +245,12 @@ class Exporter:
         if coreml:  # CoreML
             f[4], _ = self._export_coreml()
         if any((saved_model, pb, tflite, edgetpu, tfjs)):  # TensorFlow formats
-            LOGGER.warning('WARNING ⚠️ YOLOv8 TensorFlow export is still under development. '
-                           'Please consider contributing to the effort if you have TF expertise. Thank you!')
-            nms = False
             self.args.int8 |= edgetpu
             f[5], s_model = self._export_saved_model()
             if pb or tfjs:  # pb prerequisite to tfjs
                 f[6], _ = self._export_pb(s_model)
             if tflite:
-                f[7], _ = self._export_tflite(s_model, nms=nms, agnostic_nms=self.args.agnostic_nms)
+                f[7], _ = self._export_tflite(s_model, nms=False, agnostic_nms=self.args.agnostic_nms)
             if edgetpu:
                 f[8], _ = self._export_edgetpu(tflite_model=str(
                     Path(f[5]) / (self.file.stem + '_full_integer_quant.tflite')))  # int8 in/out
@@ -286,8 +285,7 @@ class Exporter:
         f = self.file.with_suffix('.torchscript')
 
         ts = torch.jit.trace(self.model, self.im, strict=False)
-        d = {'shape': self.im.shape, 'stride': int(max(self.model.stride)), 'names': self.model.names}
-        extra_files = {'config.txt': json.dumps(d)}  # torch._C.ExtraFilesMap()
+        extra_files = {'config.txt': json.dumps(self.metadata)}  # torch._C.ExtraFilesMap()
         if self.args.optimize:  # https://pytorch.org/tutorials/recipes/mobile_interpreter.html
             LOGGER.info(f'{prefix} optimizing for mobile...')
             from torch.utils.mobile_optimizer import optimize_for_mobile
@@ -432,16 +430,18 @@ class Exporter:
                               classifier_config=classifier_config)
         bits, mode = (8, 'kmeans_lut') if self.args.int8 else (16, 'linear') if self.args.half else (32, None)
         if bits < 32:
+            if 'kmeans' in mode:
+                check_requirements('scikit-learn')  # scikit-learn package required for k-means quantization
             ct_model = ct.models.neural_network.quantization_utils.quantize_weights(ct_model, bits, mode)
         if self.args.nms and self.model.task == 'detect':
             ct_model = self._pipeline_coreml(ct_model)
 
         m = self.metadata  # metadata dict
-        ct_model.short_description = m['description']
-        ct_model.author = m['author']
-        ct_model.license = m['license']
-        ct_model.version = m['version']
-        ct_model.user_defined_metadata.update({k: str(v) for k, v in m.items() if k in ('stride', 'task', 'names')})
+        ct_model.short_description = m.pop('description')
+        ct_model.author = m.pop('author')
+        ct_model.license = m.pop('license')
+        ct_model.version = m.pop('version')
+        ct_model.user_defined_metadata.update({k: str(v) for k, v in m.items()})
         ct_model.save(str(f))
         return f, ct_model
 
@@ -619,20 +619,18 @@ class Exporter:
     @try_export
     def _export_edgetpu(self, tflite_model='', prefix=colorstr('Edge TPU:')):
         # YOLOv8 Edge TPU export https://coral.ai/docs/edgetpu/models-intro/
+        LOGGER.warning(f'{prefix} WARNING ⚠️ Edge TPU known bug https://github.com/ultralytics/ultralytics/issues/1185')
+
         cmd = 'edgetpu_compiler --version'
         help_url = 'https://coral.ai/docs/edgetpu/compiler/'
         assert LINUX, f'export only supported on Linux. See {help_url}'
-        if subprocess.run(f'{cmd} > /dev/null', shell=True).returncode != 0:
+        if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True).returncode != 0:
             LOGGER.info(f'\n{prefix} export requires Edge TPU compiler. Attempting install from {help_url}')
             sudo = subprocess.run('sudo --version >/dev/null', shell=True).returncode == 0  # sudo installed on system
             for c in (
-                    # 'curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -',  # errors
-                    'wget --no-check-certificate -q -O - https://packages.cloud.google.com/apt/doc/apt-key.gpg | '
-                    'sudo apt-key add -',
-                    'echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | '  # no comma
-                    'sudo tee /etc/apt/sources.list.d/coral-edgetpu.list',
-                    'sudo apt-get update',
-                    'sudo apt-get install edgetpu-compiler'):
+                    'curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -',
+                    'echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list',
+                    'sudo apt-get update', 'sudo apt-get install edgetpu-compiler'):
                 subprocess.run(c if sudo else c.replace('sudo ', ''), shell=True, check=True)
         ver = subprocess.run(cmd, shell=True, capture_output=True, check=True).stdout.decode().split()[-1]
 
